@@ -3,8 +3,10 @@
 Fork point: upstream PyMatching `6f63b2b9474ba0fa7e511fe52bffdce858a06984`. The file and function
 names in CLAUDE.md §5.1 were checked against this commit and are unchanged.
 
-Environment used for every number below: Apple M-series laptop (arm64, 14 cores), macOS 15,
-Apple clang 16, Python 3.12, stim 1.16. The timer is `std::chrono::steady_clock`, which ticks in
+Environment used for the benchmark numbers below: Apple M5 Pro (arm64; 5 "Super" cores sharing
+one L2, plus 10 performance cores in two L2 clusters), macOS 26.5, Apple clang 21, Python 3.14,
+stim 1.16. Older sections (speed history, soundness tables before the re-run) were measured on an
+earlier Apple M-series laptop with Apple clang 16 and Python 3.12. The timer is `std::chrono::steady_clock`, which ticks in
 steps of ~41.7 ns on this machine, so sub-microsecond medians are quantised. macOS has no hard
 thread-affinity API, so `--pin` is a no-op here; pinning only takes effect on Linux.
 
@@ -18,7 +20,7 @@ thread-affinity API, so `--pin` is a no-op here; pinning only takes effect on Li
 | `src/pymatching/fastgap/gap_index.{h,cc}` | §5.3 index: `h_L`, `h_R`, landmark potentials, exact local tables, save/load |
 | `src/pymatching/fastgap/gap_decoder.{h,cc}` | §3.3–3.6 dense Dijkstra over hop/relay states, the upper bound, diagnostics, batch decoding |
 | `src/pymatching/fastgap/exact.{h,cc}` | §5.2 two-decode baseline and the brute-force subset DP |
-| `src/pymatching/fastgap/thread_pool.h` | persistent pool, one per decoder |
+| `src/pymatching/fastgap/thread_pool.h` | `SpinTeam` (the threads that share one shot's search) and `ThreadPool` (shot-parallel exact baseline) |
 | `src/pymatching/fastgap/fastgap.pybind.cc` | `fastgap._cpp_fastgap` (internal integer units only) |
 | `src/fastgap/` | Python API (`GapIndex`, `GapDecoder`, `exact_gap_batch`), landmark strategies, CLI |
 | `tests/fastgap/` | §9 tests in Python; C++ tests are the `*.test.cc` files next to each source |
@@ -84,15 +86,47 @@ file. Use another directory name, e.g. `cmake -B cmake-build` (already git-ignor
   default radius is 4 × the median edge weight (§7.4).
 - Search: dense Dijkstra over `|D|+2` states, as in §3.3. Implementation details that matter for
   speed (prices are identical to the plain per-pair formula; tests compare against it):
-  - Only *active* hop targets are priced. Once state `m` is settled, `mate(m)` is swap-removed
-    from a compacted list, since hopping into it can no longer improve anything.
+  - Labels live per *hop target*, not per state. Every target `u` (a defect not matched to `L`)
+    leads by its relay to exactly one place, `mate(u)` or `R`, so the label of state `mate(u)`
+    can sit at `u`'s position. Relaxing a row is then one contiguous, branch-free `min` pass, and
+    the argmin for the next iteration is fused into it. Targets that lead to states are sorted by
+    state index, so the first minimum is the serial tie-break. The start states (`L`, and defects
+    matched to `L`) have label 0, are never relaxed, and are kept in a separate sorted list.
   - Each settled row is priced in one pass. The landmark bound is computed over a
-    potential-major block of the active targets. The row's exact table is then scanned once
-    through a node→defect map, instead of one binary search per pair.
-  - With more than one thread, a single-shot `decode` fills the price matrix by row blocks on the
-    persistent pool. Batch decoding spreads shots over the pool instead. The pool is created once
-    per decoder, and a nested `run` falls back to serial.
-- Speed history at d=17, p=1e-3 (88 defects per shot on average; median gap-stage time per shot):
+    potential-major block of the targets. The row's exact table is then scanned once through a
+    node→defect map, instead of one binary search per pair.
+  - Ties between finished walks are broken by (iteration, defect index), so the walk, and with it
+    `gap_ub`, never depends on the thread count.
+- **Intra-shot parallelism.** `num_threads = T` threads cooperate on *each* shot; shots are always
+  decoded one after another (`decode_batch` is a plain loop). The aim is lower per-shot latency,
+  not throughput.
+  - Thread 0 runs the Dijkstra. The other `T − 1` threads *prefetch price rows*: each one
+    repeatedly claims (with a CAS) the free state whose tentative label is smallest and prices
+    its row into a shared row cache. Those are the states thread 0 settles next. Thread 0
+    publishes a label to the prefetchers only when it drops.
+  - When thread 0 settles `x`, it uses row `x` if it is ready. Otherwise it prices the row itself,
+    or, if a prefetcher holds the claim, waits for it. A row's content does not depend on who
+    priced it, so every thread count gives bit-identical results (`gap_lb`, `gap_ub`, walk,
+    censoring). C++ and Python tests check this at T ∈ {2, 3, 4, 7}.
+  - Shared rows are int32, saturated at `cap = d_LR + 1`. This is exact, not approximate. After
+    `L` settles, `best ≤ d_LR`, so no state with a label ≥ `cap` is ever settled or on the walk,
+    and no candidate ≥ `cap` is ever the answer. Before `L` settles, only label-0 states settle.
+    When `d_LR + 1` does not fit in int32, the shot runs single-threaded.
+  - The threads are a `SpinTeam`. A condvar wake-up costs several µs, more than a whole search, so
+    idle workers spin for 2 ms after their last job before they sleep. On macOS they request the
+    user-interactive QoS class (performance cores).
+  - **Rejected: one barrier per settled state.** In that design each thread owned a slice of the
+    targets and all threads joined an all-reduce per iteration. On this M5 Pro an all-reduce costs
+    70–150 ns at T = 2–4, about half of one row's work, so d=17 only reached 1.3×.
+  - **Rejected: gathering the potentials in parallel** at the start of a shot. The extra barrier
+    costs more than the ~0.5 µs it saves.
+  - Scaling is bounded by the core cluster. On this machine the 5 "Super" cores share one L2.
+    T ≤ 5 stays inside that cluster; at T > 5, prefetched rows cross clusters, and reading them
+    costs thread 0 more than pricing them itself. In microbenchmarks T = 4 and T = 5 were
+    within ~5% of each other.
+- Speed history at d=17, p=1e-3 (88 defects per shot on average; median gap-stage time per shot,
+  no upper bound). Rows above the line were measured on the earlier machine, rows below it on
+  the M5 Pro:
 
   | step | time |
   |---|---|
@@ -100,12 +134,12 @@ file. Use another directory name, e.g. `cmake -B cmake-build` (already git-ignor
   | row scan of the table, gathered potentials | 37.6 µs |
   | int32 saturated potentials | 31.8 µs |
   | active-target compaction | 27.9 µs |
+  | — M5 Pro: same code — | 21.0 µs |
+  | labels per target position, branch-free relax, fused argmin (T = 1) | 15.5 µs |
+  | row prefetching, T = 4 | 9.3 µs |
 
-  For comparison, the decode is about 9.5 µs and the exact baseline about 600 µs. The remaining
-  time splits as follows:
-  - ~15 µs is the dense O(|D|²) skeleton itself (measured with no landmarks and no tables);
-  - ~10 µs is table scans;
-  - ~4 µs is the landmark bound.
+  For comparison, the decode is about 9.5 µs (earlier machine) and the exact baseline about
+  600 µs.
 - **Rejected idea, recorded so nobody retries it:** A* with the potential `h_R − ρ`. The intended
   consistency argument needs an *upper* bound on `h_R(u)` across the relay `u ⇒ m`, but tightness
   only gives `h_R(u) ≤ h_R(m) + ρ_u + ρ_m`, which leaves a slack of 2(ρ_u + ρ_m). Relays are free
@@ -138,7 +172,8 @@ file. Use another directory name, e.g. `cmake -B cmake-build` (already git-ignor
   - compute-only per-stage timers in C++;
   - 1000 warm-up shots;
   - median, p99 and p99.9;
-  - single-thread and T-thread wall time, and core-seconds per shot;
+  - per-shot latency at T = 1 and at every T in `--threads` (threads per shot; shots are decoded
+    one after another, so no throughput or core-seconds figures are reported);
   - end-to-end latency (`--e2e`): a `python -m fastgap serve` subprocess reads bit-packed shots
     from a pipe and writes answers back. The bench measures the round trip per shot, so this
     number includes process-boundary I/O and the Python wrapper, as Craig Gidney asked for.
@@ -155,34 +190,37 @@ Every configuration below passed all of these checks:
 
 The raw per-configuration stats are in `benchmarks/fastgap/results/soundness_1e5.jsonl`. Strategy
 `auto` (= `faces_corners` here), K ≤ 16, default table radius. Times are the per-shot
-compute-only stage timers, measured while 4 worker threads decoded concurrently.
+compute-only stage timers on the M5 Pro. Shots were decoded one after another with T = 4 threads
+per shot and `parallel_grain = 1`, so even tiny shots took the parallel path; that costs ~0.2 µs
+on d = 3 shots, which the default grain avoids. The test also checks every shot bit-for-bit
+against a single-threaded decoder. The gap time includes `gap_ub`.
 
 | basis | d | p | blossom shots | blossom passes | walk simple | gap_lb == exact | t_decode (median) | t_gap (median / p99) | t_exact (median) |
 |---|---|---|---|---|---|---|---|---|---|
-| X | 3 | 0.005 | 1.4% | 0.01% | 100.00% | 100.0% | 0.12 µs | 0.17 / 1.2 µs | 1.0 µs |
-| Z | 3 | 0.005 | 0.9% | 0.02% | 100.00% | 100.0% | 0.08 µs | 0.12 / 1.0 µs | 1.0 µs |
-| X | 5 | 0.005 | 9.7% | 0.22% | 99.81% | 99.6% | 1.00 µs | 1.21 / 4.6 µs | 9.7 µs |
-| Z | 5 | 0.005 | 8.2% | 0.22% | 99.88% | 99.6% | 1.00 µs | 1.08 / 4.2 µs | 8.9 µs |
-| X | 7 | 0.005 | 29.1% | 0.93% | 98.95% | 95.4% | 4.04 µs | 5.17 / 13.8 µs | 32.7 µs |
-| Z | 7 | 0.005 | 26.4% | 0.88% | 99.19% | 95.1% | 3.92 µs | 4.42 / 11.5 µs | 30.8 µs |
-| X | 3 | 0.01 | 3.6% | 0.07% | 99.98% | 99.9% | 0.25 µs | 0.29 / 1.6 µs | 1.2 µs |
-| Z | 3 | 0.01 | 3.0% | 0.04% | 100.00% | 100.0% | 0.21 µs | 0.25 / 1.3 µs | 1.2 µs |
-| X | 5 | 0.01 | 24.5% | 0.65% | 99.12% | 98.7% | 2.83 µs | 2.50 / 7.5 µs | 13.2 µs |
-| Z | 5 | 0.01 | 23.3% | 0.77% | 99.38% | 98.9% | 2.79 µs | 2.21 / 6.8 µs | 12.5 µs |
-| X | 7 | 0.01 | 66.3% | 3.01% | 95.77% | 94.0% | 11.75 µs | 10.29 / 24.4 µs | 43.2 µs |
-| Z | 7 | 0.01 | 64.9% | 2.96% | 96.76% | 94.9% | 11.33 µs | 9.00 / 21.5 µs | 41.3 µs |
-| X | 9 | 0.0005 | 0.7% | 0.02% | 99.99% | 88.9% | 0.54 µs | 0.96 / 6.7 µs | 38.3 µs |
-| Z | 9 | 0.0005 | 0.7% | 0.01% | 100.00% | 91.3% | 0.54 µs | 0.83 / 6.3 µs | 34.5 µs |
-| X | 13 | 0.0005 | 1.8% | 0.04% | 99.97% | 45.3% | 2.00 µs | 6.58 / 19.6 µs | 163.0 µs |
-| Z | 13 | 0.0005 | 1.9% | 0.06% | 99.97% | 53.5% | 1.88 µs | 5.83 / 16.8 µs | 150.2 µs |
-| X | 17 | 0.0005 | 3.7% | 0.08% | 99.92% | 17.8% | 4.58 µs | 16.17 / 36.1 µs | 498.0 µs |
-| Z | 17 | 0.0005 | 3.9% | 0.10% | 99.94% | 25.5% | 4.54 µs | 14.62 / 30.9 µs | 451.0 µs |
-| X | 9 | 0.001 | 2.7% | 0.07% | 99.95% | 78.5% | 1.21 µs | 2.71 / 8.8 µs | 48.2 µs |
-| Z | 9 | 0.001 | 2.9% | 0.08% | 99.96% | 82.0% | 1.21 µs | 2.33 / 8.3 µs | 43.9 µs |
-| X | 13 | 0.001 | 7.7% | 0.20% | 99.83% | 40.0% | 4.08 µs | 11.54 / 23.3 µs | 207.2 µs |
-| Z | 13 | 0.001 | 8.0% | 0.20% | 99.87% | 46.0% | 4.08 µs | 10.33 / 21.5 µs | 191.7 µs |
-| X | 17 | 0.001 | 15.7% | 0.39% | 99.65% | 24.4% | 10.58 µs | 31.71 / 55.1 µs | 704.1 µs |
-| Z | 17 | 0.001 | 16.7% | 0.37% | 99.72% | 31.0% | 9.88 µs | 27.42 / 47.2 µs | 628.6 µs |
+| X | 3 | 0.005 | 1.4% | 0.01% | 100.00% | 100.0% | 0.08 µs | 0.38 / 1.1 µs | 0.9 µs |
+| Z | 3 | 0.005 | 0.9% | 0.02% | 100.00% | 100.0% | 0.08 µs | 0.33 / 1.1 µs | 0.9 µs |
+| X | 5 | 0.005 | 9.7% | 0.22% | 99.81% | 99.6% | 0.88 µs | 1.17 / 2.6 µs | 8.8 µs |
+| Z | 5 | 0.005 | 8.2% | 0.22% | 99.88% | 99.6% | 0.83 µs | 1.12 / 2.5 µs | 8.0 µs |
+| X | 7 | 0.005 | 29.1% | 0.93% | 98.95% | 95.4% | 3.42 µs | 2.67 / 5.7 µs | 29.7 µs |
+| Z | 7 | 0.005 | 26.4% | 0.88% | 99.19% | 95.1% | 3.38 µs | 2.50 / 5.3 µs | 27.9 µs |
+| X | 3 | 0.01 | 3.6% | 0.07% | 99.98% | 99.9% | 0.17 µs | 0.50 / 1.4 µs | 1.2 µs |
+| Z | 3 | 0.01 | 3.0% | 0.04% | 100.00% | 100.0% | 0.17 µs | 0.46 / 1.3 µs | 1.1 µs |
+| X | 5 | 0.01 | 24.5% | 0.65% | 99.12% | 98.7% | 2.50 µs | 1.75 / 3.8 µs | 12.0 µs |
+| Z | 5 | 0.01 | 23.3% | 0.77% | 99.38% | 98.9% | 2.42 µs | 1.67 / 3.6 µs | 11.3 µs |
+| X | 7 | 0.01 | 66.3% | 3.01% | 95.77% | 94.0% | 10.08 µs | 4.58 / 9.6 µs | 39.2 µs |
+| Z | 7 | 0.01 | 64.9% | 2.96% | 96.76% | 94.9% | 9.75 µs | 4.12 / 8.4 µs | 37.4 µs |
+| X | 9 | 0.0005 | 0.7% | 0.02% | 99.99% | 88.9% | 0.46 µs | 1.00 / 5.0 µs | 33.6 µs |
+| Z | 9 | 0.0005 | 0.7% | 0.01% | 100.00% | 91.3% | 0.46 µs | 0.96 / 4.8 µs | 30.3 µs |
+| X | 13 | 0.0005 | 1.8% | 0.04% | 99.97% | 45.3% | 1.54 µs | 3.79 / 13.1 µs | 133.8 µs |
+| Z | 13 | 0.0005 | 1.9% | 0.06% | 99.97% | 53.5% | 1.58 µs | 3.50 / 12.0 µs | 123.2 µs |
+| X | 17 | 0.0005 | 3.7% | 0.08% | 99.92% | 17.8% | 3.71 µs | 7.88 / 22.7 µs | 397.0 µs |
+| Z | 17 | 0.0005 | 3.9% | 0.10% | 99.94% | 25.5% | 3.71 µs | 7.29 / 19.5 µs | 362.8 µs |
+| X | 9 | 0.001 | 2.7% | 0.07% | 99.95% | 78.5% | 1.00 µs | 1.75 / 6.0 µs | 42.0 µs |
+| Z | 9 | 0.001 | 2.9% | 0.08% | 99.96% | 82.0% | 1.00 µs | 1.58 / 5.7 µs | 38.4 µs |
+| X | 13 | 0.001 | 7.7% | 0.20% | 99.83% | 40.0% | 3.33 µs | 5.50 / 12.9 µs | 170.3 µs |
+| Z | 13 | 0.001 | 8.0% | 0.20% | 99.87% | 46.0% | 3.33 µs | 5.12 / 11.6 µs | 156.2 µs |
+| X | 17 | 0.001 | 15.7% | 0.39% | 99.65% | 24.4% | 8.00 µs | 11.96 / 22.0 µs | 556.8 µs |
+| Z | 17 | 0.001 | 16.7% | 0.37% | 99.72% | 31.0% | 7.96 µs | 10.92 / 19.5 µs | 502.1 µs |
 
 Reading the table:
 - Blossoms are common at d=7, p=1e-2 (65% of shots), but the bound almost never loses anything
@@ -214,27 +252,78 @@ Take-aways for future experiments:
 3. Post-selection decisions (`threshold`) are cheap regardless. Early termination stops at τ, and
    `classify(τ)` is never wrong, which is tested against the exact gap.
 
-### Benchmarks
+### Benchmarks (latency only)
 
-Every DEM in `benchmarks/fastgap/index_config.json` was benchmarked with 10⁴ shots, 1000
-warm-up shots, T = 4, the `auto` strategy and the default table radius. Shots are sampled from
-the DEM. The raw per-shot CSVs and summaries are in `benchmarks/fastgap/results/`.
+Every DEM in `benchmarks/fastgap/index_config.json` was benchmarked with 2×10⁴ shots, 1000
+warm-up shots, the `auto` strategy and the default table radius. Shots are sampled from the DEM
+and decoded one after another. `T` is the number of threads that cooperate on each shot's gap
+search, *including* the calling thread (thread 0 plus T − 1 prefetchers). T = 1 is the baseline
+and T = 4 comes from the config. The raw per-shot CSVs (`t_decode_ns`, `t_gap_ns` for T = 1,
+`t_gap_ns_t4`, `t_exact_ns`) and summaries are in `benchmarks/fastgap/results/`.
 
-| DEM | detectors | mean defects | t_decode med / p99 | t_gap med / p99 / p99.9 | t_exact med | end-to-end med / p99 | 1-thread µs/shot | 4-thread µs/shot | core-µs/shot (4T) | gap_lb == exact | LB/dist on hops (median) | violations |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| rmx_d5_p5e-3 | 120 | 8.4 | 0.96 / 5.8 µs | 1.12 / 4.4 / 8.1 µs | 9.2 µs | 14.5 / 25.7 µs | 2.79 | 0.77 | 3.06 | 99.6% | 1.000 | 0 |
-| rmx_d7_p5e-3 | 336 | 25.3 | 3.83 / 14.8 µs | 4.92 / 12.3 / 16.9 µs | 31.8 µs | 23.8 / 43.5 µs | 10.11 | 2.67 | 10.66 | 95.4% | 1.000 | 0 |
-| rmx_d5_p1e-3 | 120 | 1.8 | 0.12 / 1.3 µs | 0.12 / 1.5 / 2.5 µs | 4.3 µs | 12.5 / 20.2 µs | 0.55 | 0.19 | 0.75 | 99.9% | 1.000 | 0 |
-| rmx_d9_p1e-3 | 720 | 12.1 | 1.21 / 4.2 µs | 2.67 / 8.7 / 12.4 µs | 47.0 µs | 17.0 / 29.4 µs | 4.58 | 1.26 | 5.02 | 78.0% | 0.997 | 0 |
-| rmx_d13_p1e-3 | 2184 | 38.1 | 3.92 / 9.3 µs | 11.00 / 22.5 / 31.5 µs | 200.9 µs | 28.3 / 45.5 µs | 16.14 | 4.26 | 17.04 | 38.7% | 0.996 | 0 |
-| rmx_d17_p1e-3 | 4896 | 87.8 | 9.29 / 16.8 µs | 29.54 / 50.3 / 60.0 µs | 677.2 µs | 51.3 / 78.4 µs | 40.89 | 10.78 | 43.11 | 24.2% | 1.000 | 0 |
+**Gap computation: fastgap vs the exact PyMatching baseline.** The baseline is the method of
+Gidney's cultivation and yoking code: two PyMatching decodes of the canonical DEM, with the
+observable as an extra detector toggled off and on. The two decodes are timed separately. The
+one in the class of M* yields W* and the prediction, just like an ordinary decode. The one in
+the complementary class yields W^c, and is what the baseline pays for the gap. fastgap also runs
+one ordinary decode, then computes the gap from its dual state (`t_gap`, including `gap_ub`).
+The decode is common to both methods and is reported separately, so the speed-ups below are for
+the gap computation only:
 
-Columns:
-- `t_*` are compute-only stage timers measured inside a single-threaded `decode_batch`.
-- End-to-end is the round trip of one shot through the `serve` pipe protocol: syndrome in from
-  another process, answer out. It is dominated by the pipe and the Python wrapper, roughly 10 µs
-  of fixed cost.
-- µs/shot is the batch wall time divided by the number of shots.
+    speed-up = baseline complementary-class decode latency / fastgap gap-stage latency
+
+All values are compute-only per-shot stage timers (median / p99).
+
+| DEM | mean defects | baseline gap (complementary decode) | fastgap gap, T=1 | fastgap gap, T=4 | speed-up T=1 (med / p99) | speed-up T=4 (med / p99) | violations |
+|---|---|---|---|---|---|---|---|
+| rmx_d5_p5e-3 | 8.4 | 7.17 / 14.6 µs | 0.75 / 2.5 µs | 0.75 / 2.7 µs | 9.6× / 5.7× | 9.6× / 5.5× | 0 |
+| rmx_d7_p5e-3 | 25.3 | 24.67 / 44.5 µs | 2.75 / 7.1 µs | 2.62 / 5.6 µs | 9.0× / 6.3× | 9.4× / 7.9× | 0 |
+| rmx_d5_p1e-3 | 1.8 | 3.67 / 10.0 µs | 0.12 / 0.9 µs | 0.12 / 0.9 µs | 29.3× / 10.9× | 29.3× / 10.9× | 0 |
+| rmx_d9_p1e-3 | 12.0 | 38.50 / 62.7 µs | 1.50 / 5.9 µs | 1.54 / 5.7 µs | 25.7× / 10.7× | 25.0× / 11.0× | 0 |
+| rmx_d13_p1e-3 | 38.3 | 158.71 / 232.8 µs | 6.71 / 14.8 µs | 5.50 / 13.0 µs | 23.7× / 15.8× | 28.9× / 17.9× | 0 |
+| rmx_d17_p1e-3 | 87.8 | 535.88 / 808.5 µs | 18.88 / 34.2 µs | 11.92 / 21.9 µs | 28.4× / 23.6× | 45.0× / 37.0× | 0 |
+
+The decode that both methods share (not part of the speed-ups):
+
+| DEM | mean defects | fastgap decode (PyMatching) | baseline decode in the class of M* |
+|---|---|---|---|
+| rmx_d5_p5e-3 | 8.4 | 0.83 / 5.2 µs | 0.92 / 4.9 µs |
+| rmx_d7_p5e-3 | 25.3 | 3.29 / 13.3 µs | 3.46 / 12.5 µs |
+| rmx_d5_p1e-3 | 1.8 | 0.12 / 1.2 µs | 0.12 / 1.3 µs |
+| rmx_d9_p1e-3 | 12.0 | 1.00 / 3.9 µs | 1.08 / 4.2 µs |
+| rmx_d13_p1e-3 | 38.3 | 3.33 / 7.9 µs | 3.62 / 8.8 µs |
+| rmx_d17_p1e-3 | 87.8 | 7.83 / 14.1 µs | 8.71 / 16.0 µs |
+
+Other per-DEM numbers:
+
+| DEM | detectors | fastgap gap speed-up T=4 vs T=1 (median) | end-to-end med, T=1 / T=4 (µs) | gap_lb == exact | LB/dist on hops (median) |
+|---|---|---|---|---|---|
+| rmx_d5_p5e-3 | 120 | 1.00× | 15.2 / 13.7 | 99.6% | 1.000 |
+| rmx_d7_p5e-3 | 336 | 1.05× | 21.3 / 19.1 | 95.5% | 1.000 |
+| rmx_d5_p1e-3 | 120 | 1.00× | 13.6 / 13.5 | 100.0% | 1.000 |
+| rmx_d9_p1e-3 | 720 | 0.97× | 16.0 / 14.0 | 78.8% | 0.996 |
+| rmx_d13_p1e-3 | 2184 | 1.22× | 24.7 / 20.0 | 40.0% | 0.996 |
+| rmx_d17_p1e-3 | 4896 | 1.58× | 44.2 / 31.0 | 24.3% | 1.000 |
+
+Notes:
+- The baseline's decode in the class of M* runs on a graph with one extra node (the
+  observable detector), so it is slightly slower than fastgap's ordinary decode.
+- End-to-end is the round trip of one shot through the `serve` pipe protocol, with `serve
+  --threads T`: syndrome in from another process, answer out. Roughly 10 µs of it is the fixed
+  cost of the pipe and the Python wrapper.
+- No throughput figures: shot-level parallelism is gone, and every thread works on the shot in
+  hand.
+
+Reading the tables:
+- fastgap's gap computation is 9–29× faster than the baseline's complementary decode at
+  T = 1, and up to 45× at T = 4 (d = 17). The complementary decode has to grow a region
+  across the whole spacetime volume, while the gap search touches only the defects.
+- Four threads help only on large shots. At d = 17 the gap stage drops from 18.9 to 11.9 µs, and
+  the speed-up rises from 28× to 45×; at d = 13, from 24× to 29×. On shots with fewer than
+  `parallel_grain` = 16 defects a single thread does the search, and at d = 9 T = 4 is ~3%
+  slower.
+- The single-threaded gap stage is faster than before this change (d = 17: 29.5 → 18.9 µs
+  median, including `gap_ub`), thanks to the target-indexed, branch-free relaxation.
 
 ## Known gaps / not done
 

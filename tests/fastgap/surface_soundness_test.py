@@ -25,7 +25,11 @@ def _check(task, d, p, shots, threads=4, check_shots=None):
     idx = fastgap.GapIndex.from_dem(dem)
     dets, _ = sample(dem, shots, seed=d * 1000 + int(p * 1e5))
     dec = fastgap.GapDecoder(idx, num_threads=threads)
+    dec.parallel_grain = 1  # every shot takes the intra-shot parallel search
     res = dec.decode_batch(dets, upper_bound=True)
+    single = fastgap.GapDecoder(idx, num_threads=1).decode_batch(dets, upper_bound=True)
+    for field in ("gap_lb_int", "gap_ub_int", "prediction", "weight_int", "walk_simple", "all_hops_exact", "censored"):
+        assert np.array_equal(getattr(res, field), getattr(single, field)), field
     n_check = len(dets) if check_shots is None else min(check_shots, len(dets))
     checked = fastgap.GapDecoder(idx, num_threads=threads, check=True).decode_batch(dets[:n_check], upper_bound=True)
     assert np.array_equal(checked.gap_lb_int, res.gap_lb_int[:n_check])

@@ -310,6 +310,14 @@ the best matching in the other logical class and the minimum-weight matching). T
 from the decoder's own final dual state. fastgap never runs a second decode and never sweeps the
 empty spacetime volume.
 
+Why: the complementary gap is the standard per-shot confidence signal for post-selection
+(magic-state cultivation, yoked surface codes, code concatenation). The usual way to compute it
+is to decode a second time, forced into the other logical class. That second decode costs as much
+as the first, or more, and grows with the spacetime volume. fastgap replaces it with a small
+search over the defects alone. The search is sound by construction: `gap_lb ≤ Δ` on every shot,
+checked against the exact two-decode baseline on 10⁵ shots per test configuration. Predictions and
+`W*` stay bit-identical to upstream PyMatching.
+
 ```python
 import stim, fastgap
 
@@ -319,7 +327,7 @@ dem = circuit.detector_error_model(decompose_errors=True)
 
 idx = fastgap.GapIndex.from_dem(dem, observable=0, strategy="auto", num_landmarks=16)
 idx.save("rmx_d7.idx")                      # tables are the expensive part: cache per DEM
-dec = fastgap.GapDecoder(idx, num_threads=4)
+dec = fastgap.GapDecoder(idx, num_threads=4)  # 4 threads share each shot's gap search
 
 shots = circuit.compile_detector_sampler().sample(10_000, bit_packed=True)
 res = dec.decode_batch(shots, threshold=None, upper_bound=True)
@@ -342,6 +350,35 @@ How it works:
 3. A dense Dijkstra runs over "hop / relay" walks from `L` to `R`, priced by reduced costs
    `σ(u,v) = dist(u,v) − ρ_u − ρ_v + 2β(u,v)`. Each hop distance is a lower bound: exact when
    the pair is in a local table, otherwise taken from landmark potentials.
+4. `num_threads = T` threads cooperate on *each* shot to lower its latency; shots are decoded one
+   after another. The calling thread runs the Dijkstra, and the other `T − 1` threads price, in
+   advance, the rows of the states it is about to settle. Results are bit-identical for every
+   `T`. Use at most the size of the fastest core cluster (e.g. 4–5 on an Apple M5 Pro).
+
+### Gap-computation latency
+
+fastgap compared with the exact baseline used in Gidney's cultivation and yoking code. The
+baseline runs two PyMatching decodes with the observable as an extra detector, toggled off and
+on. Both methods run one ordinary decode, which gives the prediction. The baseline then pays a
+second, complementary-class decode for the gap, while fastgap pays its gap search, which
+includes `gap_ub`. The table compares only those two costs:
+speed-up = baseline complementary decode / fastgap gap stage.
+
+Setup: rotated surface-code memory X, `d` rounds, uniform circuit noise `p`, 2×10⁴ shots per DEM,
+compute-only per-shot timers (median / p99), Apple M5 Pro. There were 0 soundness violations.
+
+| DEM | mean defects | baseline gap (complementary decode) | fastgap gap, T=1 | fastgap gap, T=4 | speed-up T=1 (med / p99) | speed-up T=4 (med / p99) |
+|---|---|---|---|---|---|---|
+| d=5, p=5e-3 | 8.4 | 7.17 / 14.6 µs | 0.75 / 2.5 µs | 0.75 / 2.7 µs | 9.6× / 5.7× | 9.6× / 5.5× |
+| d=7, p=5e-3 | 25.3 | 24.67 / 44.5 µs | 2.75 / 7.1 µs | 2.62 / 5.6 µs | 9.0× / 6.3× | 9.4× / 7.9× |
+| d=5, p=1e-3 | 1.8 | 3.67 / 10.0 µs | 0.12 / 0.9 µs | 0.12 / 0.9 µs | 29.3× / 10.9× | 29.3× / 10.9× |
+| d=9, p=1e-3 | 12.0 | 38.50 / 62.7 µs | 1.50 / 5.9 µs | 1.54 / 5.7 µs | 25.7× / 10.7× | 25.0× / 11.0× |
+| d=13, p=1e-3 | 38.3 | 158.71 / 232.8 µs | 6.71 / 14.8 µs | 5.50 / 13.0 µs | 23.7× / 15.8× | 28.9× / 17.9× |
+| d=17, p=1e-3 | 87.8 | 535.88 / 808.5 µs | 18.88 / 34.2 µs | 11.92 / 21.9 µs | 28.4× / 23.6× | 45.0× / 37.0× |
+
+The shared ordinary decode costs about the same in both methods (e.g. 7.8 µs for fastgap vs
+8.7 µs for the baseline at d=17), so it is left out. Raw per-shot CSVs and summaries are in
+`benchmarks/fastgap/results/`; more detail is in `NOTES.md`.
 
 Landmark placement is pluggable (`fastgap.landmarks`). It changes only how tight the bound is,
 never whether it is valid.

@@ -16,6 +16,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "pymatching/fastgap/exact.h"
 #include "pymatching/fastgap/fastgap_test_util.test.h"
 #include "pymatching/sparse_blossom/driver/mwpm_decoding.h"
@@ -194,8 +196,7 @@ TEST(FastgapDecoder, BatchAndThreadsMatchSingleShot) {
     std::vector<std::vector<uint64_t>> shots;
     for (int s = 0; s < 300; s++)
         shots.push_back(testutil::sample_dem(dem, rng));
-    // Many very large shots: exercise the parallel price matrix in single-shot decodes, and make
-    // sure a large shot landing on the calling thread inside a batch never re-enters the pool.
+    // Many very large shots, so the default grain also takes the parallel search path.
     for (int s = 0; s < 40; s++) {
         std::vector<uint64_t> big;
         for (uint64_t d = s % 3; d < idx->num_detectors(); d += 3)
@@ -209,20 +210,55 @@ TEST(FastgapDecoder, BatchAndThreadsMatchSingleShot) {
     DecodeOptions o;
     o.upper_bound = true;
     o.check = false;
+    o.keep_walk = true;
     GapDecoder single(idx, 1);
-    GapDecoder multi(idx, 4);
-    std::vector<GapResult> batch1, batch4;
+    std::vector<GapResult> batch1;
     single.decode_batch(packed.data(), shots.size(), bytes, o, batch1);
-    multi.decode_batch(packed.data(), shots.size(), bytes, o, batch4);
-    for (size_t s = 0; s < shots.size(); s++) {
-        auto r = single.decode(shots[s], o);
-        auto rm = multi.decode(shots[s], o);
-        for (auto* other : {&batch1[s], &batch4[s], &rm}) {
-            EXPECT_EQ(other->gap_lb, r.gap_lb);
-            EXPECT_EQ(other->gap_ub, r.gap_ub);
-            EXPECT_EQ(other->w_star, r.w_star);
-            EXPECT_EQ(other->prediction, r.prediction);
-            EXPECT_EQ(other->walk_simple, r.walk_simple);
+    // Every thread count and grain must reproduce the single-threaded search exactly, walk
+    // included (ties are broken independently of the partition). Grain 1 forces the parallel
+    // search even on shots with a handful of defects.
+    for (size_t threads : {2u, 3u, 4u, 7u}) {
+        for (size_t grain : {1u, 16u}) {
+            GapDecoder multi(idx, threads);
+            multi.parallel_grain = grain;
+            std::vector<GapResult> batch;
+            multi.decode_batch(packed.data(), shots.size(), bytes, o, batch);
+            for (size_t s = 0; s < shots.size(); s++) {
+                // Unsorted events exercise the table-scan range of each thread.
+                auto shuffled = shots[s];
+                std::shuffle(shuffled.begin(), shuffled.end(), rng);
+                auto r = single.decode(shots[s], o);
+                auto rm = multi.decode(shuffled, o);
+                auto rs = single.decode(shuffled, o);
+                for (auto* other : {&batch1[s], &batch[s]}) {
+                    EXPECT_EQ(other->gap_lb, r.gap_lb);
+                    EXPECT_EQ(other->gap_ub, r.gap_ub);
+                    EXPECT_EQ(other->w_star, r.w_star);
+                    EXPECT_EQ(other->prediction, r.prediction);
+                    EXPECT_EQ(other->walk_simple, r.walk_simple);
+                    ASSERT_EQ(other->walk.size(), r.walk.size());
+                    for (size_t h = 0; h < r.walk.size(); h++) {
+                        EXPECT_EQ(other->walk[h].from, r.walk[h].from);
+                        EXPECT_EQ(other->walk[h].to, r.walk[h].to);
+                        EXPECT_EQ(other->walk[h].price, r.walk[h].price);
+                    }
+                }
+                EXPECT_EQ(rm.gap_lb, rs.gap_lb);
+                EXPECT_EQ(rm.gap_ub, rs.gap_ub);
+                EXPECT_EQ(rm.prediction, rs.prediction);
+                ASSERT_EQ(rm.walk.size(), rs.walk.size());
+                for (size_t h = 0; h < rs.walk.size(); h++) {
+                    EXPECT_EQ(rm.walk[h].from, rs.walk[h].from);
+                    EXPECT_EQ(rm.walk[h].to, rs.walk[h].to);
+                }
+                // Early termination agrees too.
+                DecodeOptions ot = o;
+                ot.threshold = r.gap_lb / 2 + 1;
+                auto c1 = single.decode(shots[s], ot);
+                auto cm = multi.decode(shots[s], ot);
+                EXPECT_EQ(c1.gap_lb, cm.gap_lb);
+                EXPECT_EQ(c1.censored, cm.censored);
+            }
         }
     }
 }

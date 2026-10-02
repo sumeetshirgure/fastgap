@@ -185,12 +185,15 @@ def test_cli_build_index_bench_and_report(tmp_path):
               "--e2e", "--e2e-shots", "50")
     summary = json.loads(out.stdout)
     assert summary["soundness_violations"] == 0
-    assert "end_to_end_ns" in summary
-    assert summary["threads"] == [2, 3]
-    assert set(summary["throughput"]["by_threads"]) == {"2", "3"}
+    assert summary["threads"] == [1, 2, 3]
+    assert set(summary["latency_ns_by_threads"]) == {"1", "2", "3"}
+    assert set(summary["end_to_end_ns_by_threads"]) == {"1", "2", "3"}
+    assert "throughput" not in summary
     header = csv_path.read_text().splitlines()[0].split(",")
     assert header[:12] == ["shot", "num_defects", "w_star", "gap_exact", "gap_lb", "gap_ub", "t_decode_ns",
                            "t_gap_ns", "t_exact_ns", "walk_simple", "all_hops_exact", "censored"]
+    assert header[-4:] == ["t_gap_ns_t2", "t_gap_ns_t3", "t_exact_mstar_ns", "t_exact_comp_ns"]
+    assert set(summary["gap_speedup_vs_exact_by_threads"]) == {"1", "2", "3"}
     out = run("landmark-report", "--gen", "surface_code:rotated_memory_x", "-d", "3", "-p", "0.01",
               "--idx", str(idx_path), "--shots", "300", "--hop-shots", "100", "--seed", "2")
     report = json.loads(out.stdout)

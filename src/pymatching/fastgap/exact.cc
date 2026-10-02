@@ -55,7 +55,9 @@ ExactGap ExactBaseline::decode_with(pm::Mwpm& mwpm, std::vector<uint64_t>& event
     auto t0 = std::chrono::steady_clock::now();
     ExactGap g;
     size_t obs_det = index_->spec.baseline_obs_detector();
+    int64_t t_parity[2];
     for (int parity = 0; parity < 2; parity++) {
+        auto tp = std::chrono::steady_clock::now();
         if (parity == 1)
             events.push_back(obs_det);
         try {
@@ -66,9 +68,14 @@ ExactGap ExactBaseline::decode_with(pm::Mwpm& mwpm, std::vector<uint64_t>& event
         }
         if (parity == 1)
             events.pop_back();
+        t_parity[parity] =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - tp).count();
     }
     finish(g, gauge_shift(index_->spec, events));
     g.t_exact_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+    bool odd_wins = g.w_odd < g.w_even;  // as in finish()
+    g.t_mstar_ns = t_parity[odd_wins ? 1 : 0];
+    g.t_comp_ns = t_parity[odd_wins ? 0 : 1];
     return g;
 }
 

@@ -22,6 +22,10 @@ class ExactBatch:
     w_star_int: np.ndarray
     gap_int: np.ndarray
     t_exact_ns: np.ndarray
+    # The two decodes timed separately: the one in the class of M* (W* and the prediction, like
+    # an ordinary decode) and the one in the complementary class (W^c, the cost of the gap).
+    t_mstar_ns: np.ndarray
+    t_comp_ns: np.ndarray
 
     def __iter__(self):
         # Allows ``prediction, w_star, gap = exact_gap_batch(...)``.
@@ -54,6 +58,8 @@ def exact_gap_batch(idx: GapIndex, shots, *, bit_packed_shots: bool = True, num_
         w_star_int=r["w_star"],
         gap_int=np.where(r["gap"] < 0, np.inf, r["gap"].astype(np.float64)),
         t_exact_ns=r["t_exact_ns"],
+        t_mstar_ns=r["t_mstar_ns"],
+        t_comp_ns=r["t_comp_ns"],
     )
 
 

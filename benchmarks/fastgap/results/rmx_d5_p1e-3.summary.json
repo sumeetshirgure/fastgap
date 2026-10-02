@@ -1,5 +1,5 @@
 {
-  "num_shots": 10000,
+  "num_shots": 20000,
   "num_detectors": 120,
   "strategy": "faces_corners",
   "strategy_hash": "d4c912a4ebe55092",
@@ -7,73 +7,116 @@
   "table_radius": 109684448,
   "normalising_constant": 4077594.0517170443,
   "threads": [
-    4,
-    10
+    1,
+    4
   ],
   "pinned": false,
-  "compute_only_ns": {
-    "decode": {
-      "median": 125.0,
-      "p99": 1208.0,
-      "p99.9": 2334.0410000000084,
-      "mean": 166.2929,
-      "max": 3750.0
-    },
-    "gap": {
-      "median": 125.0,
-      "p99": 1250.0,
-      "p99.9": 2125.0420000000086,
-      "mean": 237.4146,
-      "max": 4083.0
-    },
-    "total": {
-      "median": 250.0,
-      "p99": 2292.0,
-      "p99.9": 4083.083000000017,
-      "mean": 403.7075,
-      "max": 6417.0
-    },
-    "gap_overhead_ratio_median": 1.0
-  },
-  "throughput": {
-    "single_thread_wall_s": 0.004872875055298209,
-    "single_thread_us_per_shot": 0.4872875055298209,
-    "core_seconds_per_shot_single": 4.872875055298209e-07,
-    "by_threads": {
-      "4": {
-        "wall_s": 0.002161749987863004,
-        "us_per_shot": 0.21617499878630042,
-        "core_seconds_per_shot": 8.646999951452017e-07,
-        "speedup": 2.254134420102523
+  "latency_ns_by_threads": {
+    "1": {
+      "decode": {
+        "median": 125.0,
+        "p99": 1208.0,
+        "p99.9": 2708.0420000001614,
+        "mean": 169.64065,
+        "max": 10834.0
       },
-      "10": {
-        "wall_s": 0.0017325410153716803,
-        "us_per_shot": 0.17325410153716803,
-        "core_seconds_per_shot": 1.7325410153716803e-06,
-        "speedup": 2.812559709735262
-      }
+      "gap": {
+        "median": 125.0,
+        "p99": 917.0,
+        "p99.9": 1708.0420000001614,
+        "mean": 211.1549,
+        "max": 3958.0
+      },
+      "total": {
+        "median": 250.0,
+        "p99": 2042.4099999999344,
+        "p99.9": 4000.0,
+        "mean": 380.79555,
+        "max": 10959.0
+      },
+      "gap_median_speedup": 1.0
+    },
+    "4": {
+      "decode": {
+        "median": 125.0,
+        "p99": 1209.0,
+        "p99.9": 2667.0410000001575,
+        "mean": 170.1584,
+        "max": 7958.0
+      },
+      "gap": {
+        "median": 125.0,
+        "p99": 917.0,
+        "p99.9": 1584.0,
+        "mean": 202.00765,
+        "max": 12417.0
+      },
+      "total": {
+        "median": 250.0,
+        "p99": 2042.0,
+        "p99.9": 3834.0,
+        "mean": 372.16605,
+        "max": 14875.0
+      },
+      "gap_median_speedup": 1.0
     }
   },
-  "walk_simple_fraction": 0.9999,
-  "all_hops_exact_fraction": 0.9996,
+  "gap_overhead_ratio_median": 1.0,
+  "walk_simple_fraction": 1.0,
+  "all_hops_exact_fraction": 0.9998,
   "censored_fraction": 0.0,
-  "blossom_shot_fraction": 0.0047,
-  "mean_defects": 1.7875,
+  "blossom_shot_fraction": 0.0046,
+  "mean_defects": 1.80135,
   "exact_ns": {
-    "median": 3625.0,
-    "p99": 10916.0,
-    "p99.9": 15876.292000000263,
-    "mean": 4622.2506,
-    "max": 30375.0
+    "median": 3750.0,
+    "p99": 10917.0,
+    "p99.9": 16500.12500000048,
+    "mean": 4794.78065,
+    "max": 29167.0
+  },
+  "exact_mstar_decode_ns": {
+    "median": 125.0,
+    "p99": 1333.0099999999984,
+    "p99.9": 2708.0420000001614,
+    "mean": 188.9764,
+    "max": 10000.0
+  },
+  "exact_comp_decode_ns": {
+    "median": 3667.0,
+    "p99": 9958.0,
+    "p99.9": 15500.33300000128,
+    "mean": 4566.40235,
+    "max": 28500.0
+  },
+  "gap_speedup_vs_exact_by_threads": {
+    "1": {
+      "median": 29.336,
+      "p99": 10.859323882224645,
+      "p99.9": 9.074913263256883
+    },
+    "4": {
+      "median": 29.336,
+      "p99": 10.859323882224645,
+      "p99.9": 9.78556376262707
+    }
   },
   "soundness_violations": 0,
-  "gap_lb_equals_exact_fraction": 0.9994,
-  "mean_gap_shortfall_db": 0.003300669504228653,
-  "end_to_end_ns": {
-    "median": 12542.0,
-    "p99": 19085.66,
-    "p99.9": 33839.33400000129,
-    "mean": 35918.2935,
-    "max": 48965333.0
+  "gap_lb_equals_exact_fraction": 0.9997,
+  "mean_gap_shortfall_db": 0.0010850876666207295,
+  "end_to_end_ns_by_threads": {
+    "1": {
+      "median": 13625.0,
+      "p99": 20627.92,
+      "p99.9": 34629.20800000086,
+      "mean": 38422.9325,
+      "max": 49236000.0
+    },
+    "4": {
+      "median": 13542.0,
+      "p99": 20795.739999999998,
+      "p99.9": 30959.833000000373,
+      "mean": 38714.928,
+      "max": 50030292.0
+    }
   }
 }
