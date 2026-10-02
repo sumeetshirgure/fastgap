@@ -60,6 +60,25 @@ set(SOURCE_FILES_NO_MAIN
         src/pymatching/rand/rand_gen.cc
         )
 
+# fastgap: certified complementary-gap lower bounds from the decoder's final dual state.
+set(FASTGAP_SOURCE_FILES
+        src/pymatching/fastgap/canonical.cc
+        src/pymatching/fastgap/interior_graph.cc
+        src/pymatching/fastgap/dual_state.cc
+        src/pymatching/fastgap/gap_index.cc
+        src/pymatching/fastgap/gap_decoder.cc
+        src/pymatching/fastgap/exact.cc
+        )
+
+set(FASTGAP_TEST_FILES
+        src/pymatching/fastgap/canonical.test.cc
+        src/pymatching/fastgap/interior_graph.test.cc
+        src/pymatching/fastgap/dual_state.test.cc
+        src/pymatching/fastgap/gap_index.test.cc
+        src/pymatching/fastgap/gap_decoder.test.cc
+        src/pymatching/fastgap/exact.test.cc
+        )
+
 set(TEST_FILES
         src/pymatching/sparse_blossom/driver/namespaced_main.test.cc
         src/pymatching/sparse_blossom/driver/mwpm_decoding.test.cc
@@ -109,7 +128,9 @@ install(TARGETS pymatching RUNTIME DESTINATION bin)
 
 enable_testing()
 
-add_executable(pymatching_tests ${SOURCE_FILES_NO_MAIN} ${TEST_FILES})
+add_executable(pymatching_tests ${SOURCE_FILES_NO_MAIN} ${TEST_FILES} ${FASTGAP_SOURCE_FILES} ${FASTGAP_TEST_FILES})
+# fastgap's debug invariants (CLAUDE.md §5.1) are always on in tests.
+target_compile_definitions(pymatching_tests PRIVATE FASTGAP_CHECK)
 target_compile_options(pymatching_tests PRIVATE -fsanitize=address -g -fsanitize=undefined -fno-omit-frame-pointer -coverage)
 if (NOT (MSVC))
     target_link_options(pymatching_tests PRIVATE -pthread -fsanitize=address -fsanitize=undefined -coverage)
@@ -144,6 +165,17 @@ IF(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pybind11/CMakeLists.txt)
     pybind11_add_module(_cpp_pymatching ${PYTHON_API_FILES} ${SOURCE_FILES_NO_MAIN})
     target_link_libraries(_cpp_pymatching PRIVATE libstim)
     target_compile_options(_cpp_pymatching PRIVATE ${ARCH_OPT})
+
+    pybind11_add_module(_cpp_fastgap src/pymatching/fastgap/fastgap.pybind.cc ${SOURCE_FILES_NO_MAIN} ${FASTGAP_SOURCE_FILES})
+    target_link_libraries(_cpp_fastgap PRIVATE libstim)
+    target_compile_options(_cpp_fastgap PRIVATE ${ARCH_OPT})
+    # setup.py builds both extensions from one CMake tree; each lands in its own package directory.
+    if (DEFINED PYMATCHING_PY_OUTPUT_DIR)
+        set_target_properties(_cpp_pymatching PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PYMATCHING_PY_OUTPUT_DIR})
+    endif ()
+    if (DEFINED FASTGAP_PY_OUTPUT_DIR)
+        set_target_properties(_cpp_fastgap PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${FASTGAP_PY_OUTPUT_DIR})
+    endif ()
 else()
     message("WARNING: Skipped the pybind11 module _cpp_pymatching because the `pybind11` git submodule isn't present. To fix, run `git submodule update --init --recursive`")
 endif()

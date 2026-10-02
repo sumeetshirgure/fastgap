@@ -27,7 +27,16 @@ class CMakeExtension(Extension):
 
 class CMakeBuild(build_ext):
     def build_extension(self, ext):
+        # Both extensions (pymatching._cpp_pymatching and fastgap._cpp_fastgap) come from one CMake
+        # tree; the first call builds both targets and later calls are no-ops.
+        if getattr(self, "_cmake_built", False):
+            return
+        self._cmake_built = True
         extdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
+        ext_dirs = {
+            e.name.split(".")[-1]: os.path.abspath(os.path.dirname(self.get_ext_fullpath(e.name)))
+            for e in self.extensions
+        }
 
         # required for auto-detection & inclusion of auxiliary "native" libs
         if not extdir.endswith(os.path.sep):
@@ -48,6 +57,10 @@ class CMakeBuild(build_ext):
             f"-DPYTHON_EXECUTABLE={sys.executable}",
             f"-DCMAKE_BUILD_TYPE={cfg}",  # not used on MSVC, but no harm
         ]
+        if "_cpp_pymatching" in ext_dirs:
+            cmake_args.append(f"-DPYMATCHING_PY_OUTPUT_DIR={ext_dirs['_cpp_pymatching']}")
+        if "_cpp_fastgap" in ext_dirs:
+            cmake_args.append(f"-DFASTGAP_PY_OUTPUT_DIR={ext_dirs['_cpp_fastgap']}")
         build_args = []
         # Adding CMake arguments set as environment variable
         # (needed e.g. to build for ARM OSx on conda-forge)
@@ -121,11 +134,14 @@ class CMakeBuild(build_ext):
                 # CMake 3.12+ only.
                 build_args += [f"-j{self.parallel}"]
 
-        build_temp = os.path.join(self.build_temp, ext.name)
+        build_temp = os.path.join(self.build_temp, "cmake")
         if not os.path.exists(build_temp):
             os.makedirs(build_temp)
         subprocess.check_call(["cmake", ext.sourcedir] + cmake_args, cwd=build_temp)
-        subprocess.check_call(["cmake", "--build", ".", "--target", "_cpp_pymatching"] + build_args, cwd=build_temp)
+        targets = []
+        for target in ext_dirs:
+            targets += ["--target", target]
+        subprocess.check_call(["cmake", "--build", "."] + targets + build_args, cwd=build_temp)
 
 
 version = {}
@@ -144,14 +160,17 @@ setup(
     long_description=long_description,
     long_description_content_type='text/markdown',
     license="Apache 2",
-    ext_modules=[CMakeExtension("pymatching._cpp_pymatching")],
+    ext_modules=[CMakeExtension("pymatching._cpp_pymatching"), CMakeExtension("fastgap._cpp_fastgap")],
     packages=find_packages("src"),
     package_dir={'': 'src'},
     cmdclass={"build_ext": CMakeBuild},
     zip_safe=False,
-    extras_require={"test": ["pytest>=6.0"]},
+    extras_require={"test": ["pytest>=6.0"], "fastgap": ["stim"]},
     entry_points={
-        'console_scripts': ['pymatching=pymatching._cli_argv:cli_argv'],
+        'console_scripts': [
+            'pymatching=pymatching._cli_argv:cli_argv',
+            'fastgap=fastgap.cli:main',
+        ],
     },
     python_requires=">=3.8",
     install_requires=['scipy', 'numpy', 'networkx', 'matplotlib'],

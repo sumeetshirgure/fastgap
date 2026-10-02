@@ -1,0 +1,65 @@
+{
+  "num_shots": 10000,
+  "num_detectors": 120,
+  "strategy": "faces_corners",
+  "strategy_hash": "d4c912a4ebe55092",
+  "num_landmarks": 12,
+  "table_radius": 109684448,
+  "normalising_constant": 4077594.0517170443,
+  "threads": 4,
+  "pinned": false,
+  "compute_only_ns": {
+    "decode": {
+      "median": 125.0,
+      "p99": 1334.0,
+      "p99.9": 2667.0410000000084,
+      "mean": 197.0871,
+      "max": 17042.0
+    },
+    "gap": {
+      "median": 125.0,
+      "p99": 1458.0,
+      "p99.9": 2542.0410000000084,
+      "mean": 271.8166,
+      "max": 15917.0
+    },
+    "total": {
+      "median": 292.0,
+      "p99": 2750.0,
+      "p99.9": 5125.333000000068,
+      "mean": 468.9037,
+      "max": 17208.0
+    },
+    "gap_overhead_ratio_median": 1.0
+  },
+  "throughput": {
+    "single_thread_wall_s": 0.005529457936063409,
+    "single_thread_us_per_shot": 0.5529457936063409,
+    "threads_wall_s": 0.001877209055237472,
+    "threads_us_per_shot": 0.1877209055237472,
+    "core_seconds_per_shot_single": 5.529457936063409e-07,
+    "core_seconds_per_shot_threads": 7.508836220949888e-07
+  },
+  "walk_simple_fraction": 0.9999,
+  "all_hops_exact_fraction": 0.9996,
+  "censored_fraction": 0.0,
+  "blossom_shot_fraction": 0.0047,
+  "mean_defects": 1.7875,
+  "exact_ns": {
+    "median": 4333.0,
+    "p99": 11541.42000000001,
+    "p99.9": 15333.126000000026,
+    "mean": 5287.8993,
+    "max": 32292.0
+  },
+  "soundness_violations": 0,
+  "gap_lb_equals_exact_fraction": 0.9994,
+  "mean_gap_shortfall_db": 0.003300669504228653,
+  "end_to_end_ns": {
+    "median": 12542.0,
+    "p99": 20250.0,
+    "p99.9": 34963.87500000099,
+    "mean": 37887.345,
+    "max": 49746041.0
+  }
+}

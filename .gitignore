@@ -34,3 +34,6 @@ build.ninja
 .ninja_log
 .clwb
 .vscode
+.venv
+benchmarks/fastgap/dems
+benchmarks/fastgap/indices

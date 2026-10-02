@@ -53,6 +53,7 @@ cc_test(
     srcs = SOURCE_FILES_NO_MAIN + TEST_FILES,
     copts = [
         "-std=c++20",
+        "-DFASTGAP_CHECK",
     ],
     data = glob(["testdata/**"]),
     includes = ["src/"],
