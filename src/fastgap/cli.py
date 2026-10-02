@@ -199,19 +199,23 @@ def cmd_bench(args) -> int:
     shots = sample_shots(dem, args.shots, args.seed)
     warm = sample_shots(dem, args.warmup, None if args.seed is None else args.seed + 1)
 
-    single = GapDecoder(idx, num_threads=1, pin_threads=args.pin is not None)
-    multi = GapDecoder(idx, num_threads=args.threads, pin_threads=args.pin is not None) if args.threads > 1 else single
-    for dec in {id(single): single, id(multi): multi}.values():
-        dec.decode_batch(warm, threshold=args.threshold, upper_bound=args.upper_bound)
-
+    pin = args.pin is not None
+    single = GapDecoder(idx, num_threads=1, pin_threads=pin)
+    single.decode_batch(warm, threshold=args.threshold, upper_bound=args.upper_bound)
     t0 = time.perf_counter()
     res = single.decode_batch(shots, threshold=args.threshold, upper_bound=args.upper_bound)
     wall_1 = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    res_t = multi.decode_batch(shots, threshold=args.threshold, upper_bound=args.upper_bound)
-    wall_t = time.perf_counter() - t0
-    if not (np.array_equal(res.gap_lb_int, res_t.gap_lb_int) and np.array_equal(res.prediction, res_t.prediction)):
-        raise AssertionError("multi-threaded results differ from single-threaded results")
+
+    # One wall-clock measurement per requested thread count, each with its own pool and warm-up.
+    walls = {}
+    for t in args.threads:
+        multi = GapDecoder(idx, num_threads=t, pin_threads=pin) if t > 1 else single
+        multi.decode_batch(warm, threshold=args.threshold, upper_bound=args.upper_bound)
+        t0 = time.perf_counter()
+        res_t = multi.decode_batch(shots, threshold=args.threshold, upper_bound=args.upper_bound)
+        walls[t] = time.perf_counter() - t0
+        if not (np.array_equal(res.gap_lb_int, res_t.gap_lb_int) and np.array_equal(res.prediction, res_t.prediction)):
+            raise AssertionError(f"{t}-thread results differ from single-threaded results")
 
     exact = None
     violations = 0
@@ -265,7 +269,7 @@ def cmd_bench(args) -> int:
         "num_landmarks": len(idx.landmarks),
         "table_radius": idx.table_radius,
         "normalising_constant": nc,
-        "threads": args.threads,
+        "threads": list(args.threads),
         "pinned": args.pin is not None and sys.platform.startswith("linux"),
         "compute_only_ns": {
             "decode": percentiles(res.t_decode_ns),
@@ -276,10 +280,16 @@ def cmd_bench(args) -> int:
         "throughput": {
             "single_thread_wall_s": wall_1,
             "single_thread_us_per_shot": 1e6 * wall_1 / n,
-            "threads_wall_s": wall_t,
-            "threads_us_per_shot": 1e6 * wall_t / n,
             "core_seconds_per_shot_single": wall_1 / n,
-            "core_seconds_per_shot_threads": args.threads * wall_t / n,
+            "by_threads": {
+                str(t): {
+                    "wall_s": w,
+                    "us_per_shot": 1e6 * w / n,
+                    "core_seconds_per_shot": t * w / n,
+                    "speedup": wall_1 / w,
+                }
+                for t, w in walls.items()
+            },
         },
         "walk_simple_fraction": float(np.mean(res.walk_simple)),
         "all_hops_exact_fraction": float(np.mean(res.all_hops_exact)),
@@ -385,7 +395,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     add_index_args(b)
     b.add_argument("--shots", type=int, default=10000)
     b.add_argument("--warmup", type=int, default=1000)
-    b.add_argument("--threads", type=int, default=1)
+    b.add_argument("--threads", type=int, nargs="+", default=[1],
+                   help="thread counts to measure throughput at, e.g. --threads 4 10")
     b.add_argument("--seed", type=int, default=None)
     b.add_argument("--threshold", type=float, default=None, help="post-selection threshold in nats")
     b.add_argument("--upper-bound", action="store_true", default=True)

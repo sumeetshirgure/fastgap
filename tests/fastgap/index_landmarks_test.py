@@ -181,11 +181,13 @@ def test_cli_build_index_bench_and_report(tmp_path):
     assert json.loads(out.stdout)["strategy"] == "faces_corners"
     csv_path = tmp_path / "b.csv"
     out = run("bench", "--gen", "surface_code:rotated_memory_x", "-d", "3", "-p", "0.01", "--idx", str(idx_path),
-              "--shots", "500", "--warmup", "100", "--threads", "2", "--seed", "1", "--out", str(csv_path),
+              "--shots", "500", "--warmup", "100", "--threads", "2", "3", "--seed", "1", "--out", str(csv_path),
               "--e2e", "--e2e-shots", "50")
     summary = json.loads(out.stdout)
     assert summary["soundness_violations"] == 0
     assert "end_to_end_ns" in summary
+    assert summary["threads"] == [2, 3]
+    assert set(summary["throughput"]["by_threads"]) == {"2", "3"}
     header = csv_path.read_text().splitlines()[0].split(",")
     assert header[:12] == ["shot", "num_defects", "w_star", "gap_exact", "gap_lb", "gap_ub", "t_decode_ns",
                            "t_gap_ns", "t_exact_ns", "walk_simple", "all_hops_exact", "censored"]

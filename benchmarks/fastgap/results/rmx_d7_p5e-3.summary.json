@@ -6,39 +6,53 @@
   "num_landmarks": 12,
   "table_radius": 103703888,
   "normalising_constant": 5070635.591400636,
-  "threads": 4,
+  "threads": [
+    4,
+    10
+  ],
   "pinned": false,
   "compute_only_ns": {
     "decode": {
-      "median": 3833.0,
-      "p99": 14833.0,
-      "p99.9": 22209.333000000068,
-      "mean": 4555.3729,
-      "max": 27292.0
+      "median": 3250.0,
+      "p99": 13166.01,
+      "p99.9": 19583.625000000127,
+      "mean": 3893.8378,
+      "max": 24125.0
     },
     "gap": {
-      "median": 4917.0,
-      "p99": 12333.0,
-      "p99.9": 16875.167000000034,
-      "mean": 5285.12,
-      "max": 23667.0
+      "median": 4042.0,
+      "p99": 10334.410000000009,
+      "p99.9": 15000.083000000017,
+      "mean": 4369.8942,
+      "max": 26041.0
     },
     "total": {
-      "median": 9041.0,
-      "p99": 24084.260000000028,
-      "p99.9": 31416.04200000001,
-      "mean": 9840.4929,
-      "max": 37083.0
+      "median": 7542.0,
+      "p99": 21084.41000000001,
+      "p99.9": 27417.79100000016,
+      "mean": 8263.732,
+      "max": 32417.0
     },
-    "gap_overhead_ratio_median": 1.2828072006261415
+    "gap_overhead_ratio_median": 1.2436923076923077
   },
   "throughput": {
-    "single_thread_wall_s": 0.1011011250084266,
-    "single_thread_us_per_shot": 10.11011250084266,
-    "threads_wall_s": 0.026659874944016337,
-    "threads_us_per_shot": 2.6659874944016337,
-    "core_seconds_per_shot_single": 1.0110112500842661e-05,
-    "core_seconds_per_shot_threads": 1.0663949977606536e-05
+    "single_thread_wall_s": 0.08526858303230256,
+    "single_thread_us_per_shot": 8.526858303230256,
+    "core_seconds_per_shot_single": 8.526858303230256e-06,
+    "by_threads": {
+      "4": {
+        "wall_s": 0.024102416005916893,
+        "us_per_shot": 2.4102416005916893,
+        "core_seconds_per_shot": 9.640966402366757e-06,
+        "speedup": 3.537760820797799
+      },
+      "10": {
+        "wall_s": 0.011892792070284486,
+        "us_per_shot": 1.1892792070284486,
+        "core_seconds_per_shot": 1.1892792070284485e-05,
+        "speedup": 7.169769935300219
+      }
+    }
   },
   "walk_simple_fraction": 0.9894,
   "all_hops_exact_fraction": 0.9679,
@@ -46,20 +60,20 @@
   "blossom_shot_fraction": 0.2961,
   "mean_defects": 25.2831,
   "exact_ns": {
-    "median": 31833.0,
-    "p99": 59083.0,
-    "p99.9": 71250.41700000009,
-    "mean": 32418.7908,
-    "max": 106875.0
+    "median": 27334.0,
+    "p99": 49417.0,
+    "p99.9": 61210.12400000023,
+    "mean": 27810.5784,
+    "max": 69417.0
   },
   "soundness_violations": 0,
   "gap_lb_equals_exact_fraction": 0.954,
   "mean_gap_shortfall_db": 0.18191823951094233,
   "end_to_end_ns": {
-    "median": 23833.0,
-    "p99": 43549.48999999999,
-    "p99.9": 63840.75000000158,
-    "mean": 51592.9635,
-    "max": 53288917.0
+    "median": 21354.5,
+    "p99": 41295.329999999994,
+    "p99.9": 54833.58400000012,
+    "mean": 48794.8625,
+    "max": 53439625.0
   }
 }
