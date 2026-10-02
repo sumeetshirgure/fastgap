@@ -1,0 +1,79 @@
+{
+  "dem_detectors": 2184,
+  "strategy": "faces_corners",
+  "strategy_hash": "cbd0f961e3c74fa6",
+  "landmarks": [
+    "face:t=min",
+    "face:t=max",
+    "face:x1=min",
+    "face:x1=max",
+    "corner:---",
+    "corner:--+",
+    "corner:-+-",
+    "corner:-++",
+    "corner:+--",
+    "corner:+-+",
+    "corner:++-",
+    "corner:+++"
+  ],
+  "memory": {
+    "num_detectors": 2184,
+    "num_landmarks": 12,
+    "table_radius": 109684448,
+    "table_bytes": 3868880,
+    "table_bytes_per_detector": 1771.4652014652015,
+    "potential_bytes": 366912,
+    "potential_bytes_per_detector": 168.0
+  },
+  "num_shots": 10000,
+  "lb_over_dist_on_hops": {
+    "count": 4118,
+    "mean": 0.9491640717048774,
+    "fraction_exact": 0.46138902379796015,
+    "quantiles": {
+      "0.01": 0.6643075051009417,
+      "0.1": 0.8105112308511924,
+      "0.5": 0.9959932250715158,
+      "0.9": 1.0
+    }
+  },
+  "fraction_gap_lb_equals_delta_sigma": 0.3884,
+  "fraction_gap_lb_equals_gap_exact": 0.3866,
+  "shortfall_db_histogram": {
+    "total": {
+      "[0,1e-09)": 3866,
+      "[1e-09,0.5)": 176,
+      "[0.5,1)": 483,
+      "[1,2)": 534,
+      "[2,3)": 377,
+      "[3,5)": 787,
+      "[5,10)": 1445,
+      "[10,20)": 1425,
+      "[20,inf)": 907
+    },
+    "lb_part": {
+      "[0,1e-09)": 3884,
+      "[1e-09,0.5)": 176,
+      "[0.5,1)": 483,
+      "[1,2)": 529,
+      "[2,3)": 376,
+      "[3,5)": 783,
+      "[5,10)": 1447,
+      "[10,20)": 1418,
+      "[20,inf)": 904
+    },
+    "alternation_blossom_part": {
+      "[0,1e-09)": 9972,
+      "[1e-09,0.5)": 3,
+      "[0.5,1)": 1,
+      "[1,2)": 6,
+      "[2,3)": 1,
+      "[3,5)": 8,
+      "[5,10)": 2,
+      "[10,20)": 6,
+      "[20,inf)": 1
+    }
+  },
+  "us_per_shot": 13.783620810136199,
+  "soundness_violations": 0
+}

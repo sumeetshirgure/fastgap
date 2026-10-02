@@ -84,4 +84,10 @@ void decode_detection_events_to_edges_with_edge_correlations(
 
 }  // namespace pm
 
+// Defined in mwpm_decoding.cc. Declared here so that fastgap can read the dual state between
+// flooding and shattering.
+void process_timeline_until_completion(pm::Mwpm& mwpm, const std::vector<uint64_t>& detection_events);
+void shatter_blossoms_for_all_detection_events_and_extract_match_edges(
+    pm::Mwpm& mwpm, const std::vector<uint64_t>& detection_events);
+
 #endif  // PYMATCHING2_MWPM_DECODING_H

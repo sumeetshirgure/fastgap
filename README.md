@@ -301,6 +301,65 @@ methods, or by loading from a NetworkX or rustworkx graph.
 For more details on how to use PyMatching,
 see [the documentation](https://pymatching.readthedocs.io).
 
+## fastgap
+
+This fork adds **fastgap**, a Python package shipped in the same distribution as `pymatching`.
+It decodes each shot with the ordinary, untruncated sparse-blossom decode and returns a
+**certified lower bound on the complementary gap** `Δ = W^c − W*` (the weight difference between
+the best matching in the other logical class and the minimum-weight matching). The bound comes
+from the decoder's own final dual state. fastgap never runs a second decode and never sweeps the
+empty spacetime volume.
+
+```python
+import stim, fastgap
+
+circuit = stim.Circuit.generated("surface_code:rotated_memory_x", distance=7, rounds=7,
+                                 after_clifford_depolarization=1e-3)
+dem = circuit.detector_error_model(decompose_errors=True)
+
+idx = fastgap.GapIndex.from_dem(dem, observable=0, strategy="auto", num_landmarks=16)
+idx.save("rmx_d7.idx")                      # tables are the expensive part: cache per DEM
+dec = fastgap.GapDecoder(idx, num_threads=4)
+
+shots = circuit.compile_detector_sampler().sample(10_000, bit_packed=True)
+res = dec.decode_batch(shots, threshold=None, upper_bound=True)
+res.prediction    # identical to pymatching.Matching.decode_batch
+res.weight        # W*, identical to upstream
+res.gap_lb        # certified lower bound on the gap (nats); res.gap_lb_db in dB
+res.gap_ub        # upper bound when the returned walk is simple, else inf
+
+prediction, w_star, gap = fastgap.exact_gap_batch(idx, shots)   # exact two-decode baseline
+assert (res.gap_lb_int <= fastgap.exact_gap_batch(idx, shots).gap_int).all()
+```
+
+For post-selection at threshold `τ`, pass `threshold=τ`: the search stops as soon as the bound
+reaches `τ` (`censored=True`), and `res.classify(τ)` sorts shots into keep, discard and uncertain.
+
+How it works:
+
+1. Observable `k` is gauge-fixed onto the boundary, which splits the boundary into sides `L` and `R`.
+2. The radii `y_v`, `y_S` are read before shattering.
+3. A dense Dijkstra runs over "hop / relay" walks from `L` to `R`, priced by reduced costs
+   `σ(u,v) = dist(u,v) − ρ_u − ρ_v + 2β(u,v)`. Each hop distance is a lower bound: exact when
+   the pair is in a local table, otherwise taken from landmark potentials.
+
+Landmark placement is pluggable (`fastgap.landmarks`). It changes only how tight the bound is,
+never whether it is valid.
+
+Command line:
+
+```
+python -m fastgap build-index --dem X.dem --strategy auto --out X.idx
+python -m fastgap bench --dem X.dem --idx X.idx --shots 100000 --threads 4 --out X.csv --e2e
+python -m fastgap landmark-report --dem X.dem --idx X.idx --shots 10000
+```
+
+Supported in v1: graphlike DEMs with boundaries, non-negative weights, and one observable per
+index. Not supported: correlated matching, and codes with a logical that never touches a
+boundary (toric codes raise `fastgap.BoundarylessLogicalError`). The design document is
+`CLAUDE.md`. Implementation notes and measured results are in `NOTES.md`, and benchmarks are in
+`benchmarks/fastgap/`.
+
 ## Attribution
 
 When using PyMatching please cite our [paper](https://arxiv.org/abs/2303.15933) on the sparse blossom algorithm (implemented in version 2):
