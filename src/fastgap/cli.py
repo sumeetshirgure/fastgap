@@ -140,7 +140,7 @@ RESPONSE = struct.Struct("<Qqb")
 
 def cmd_serve(args) -> int:
     idx = GapIndex.load(args.idx)
-    dec = GapDecoder(idx, num_threads=1)
+    dec = GapDecoder(idx, num_threads=args.threads)
     if args.pin is not None:
         _cpp_fastgap.pin_current_thread(args.pin)
     inp = sys.stdin.buffer
@@ -160,8 +160,9 @@ def cmd_serve(args) -> int:
         out.flush()
 
 
-def measure_end_to_end(idx_path: str, shots: np.ndarray, threshold: Optional[float], pin: Optional[int]) -> np.ndarray:
-    cmd = [sys.executable, "-m", "fastgap", "serve", "--idx", idx_path]
+def measure_end_to_end(idx_path: str, shots: np.ndarray, threshold: Optional[float], pin: Optional[int],
+                       threads: int = 1) -> np.ndarray:
+    cmd = [sys.executable, "-m", "fastgap", "serve", "--idx", idx_path, "--threads", str(threads)]
     if threshold is not None:
         cmd += ["--threshold", str(threshold)]
     if pin is not None:
@@ -199,22 +200,20 @@ def cmd_bench(args) -> int:
     shots = sample_shots(dem, args.shots, args.seed)
     warm = sample_shots(dem, args.warmup, None if args.seed is None else args.seed + 1)
 
+    # Latency at each thread count. Shots are always decoded one after another; the threads of a
+    # decoder cooperate on each shot's gap search, so more threads lower per-shot latency.
     pin = args.pin is not None
-    single = GapDecoder(idx, num_threads=1, pin_threads=pin)
-    single.decode_batch(warm, threshold=args.threshold, upper_bound=args.upper_bound)
-    t0 = time.perf_counter()
-    res = single.decode_batch(shots, threshold=args.threshold, upper_bound=args.upper_bound)
-    wall_1 = time.perf_counter() - t0
-
-    # One wall-clock measurement per requested thread count, each with its own pool and warm-up.
-    walls = {}
-    for t in args.threads:
-        multi = GapDecoder(idx, num_threads=t, pin_threads=pin) if t > 1 else single
-        multi.decode_batch(warm, threshold=args.threshold, upper_bound=args.upper_bound)
-        t0 = time.perf_counter()
-        res_t = multi.decode_batch(shots, threshold=args.threshold, upper_bound=args.upper_bound)
-        walls[t] = time.perf_counter() - t0
-        if not (np.array_equal(res.gap_lb_int, res_t.gap_lb_int) and np.array_equal(res.prediction, res_t.prediction)):
+    thread_counts = sorted(set([1] + list(args.threads)))
+    by_threads = {}
+    for t in thread_counts:
+        dec = GapDecoder(idx, num_threads=t, pin_threads=pin)
+        dec.decode_batch(warm, threshold=args.threshold, upper_bound=args.upper_bound)
+        by_threads[t] = dec.decode_batch(shots, threshold=args.threshold, upper_bound=args.upper_bound)
+    res = by_threads[1]
+    for t, res_t in by_threads.items():
+        same = (np.array_equal(res.gap_lb_int, res_t.gap_lb_int) and np.array_equal(res.gap_ub_int, res_t.gap_ub_int)
+                and np.array_equal(res.prediction, res_t.prediction) and np.array_equal(res.walk_simple, res_t.walk_simple))
+        if not same:
             raise AssertionError(f"{t}-thread results differ from single-threaded results")
 
     exact = None
@@ -235,14 +234,17 @@ def cmd_bench(args) -> int:
         if not path:
             path = os.path.join(os.path.dirname(os.path.abspath(args.out or ".")) or ".", ".fastgap_bench.idx")
             idx.save(path)
-        measure_end_to_end(path, warm[: min(len(warm), 200)], args.threshold, args.pin)
-        e2e = measure_end_to_end(path, shots[: args.e2e_shots], args.threshold, args.pin)
+        e2e = {}
+        for t in thread_counts:
+            measure_end_to_end(path, warm[: min(len(warm), 200)], args.threshold, args.pin, t)
+            e2e[t] = measure_end_to_end(path, shots[: args.e2e_shots], args.threshold, args.pin, t)
 
     nc = idx.normalising_constant
     if args.out:
         with open(args.out, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(CSV_COLUMNS)
+            extra = [t for t in thread_counts if t != 1]
+            w.writerow(CSV_COLUMNS + [f"t_gap_ns_t{t}" for t in extra] + ["t_exact_mstar_ns", "t_exact_comp_ns"])
             for i in range(len(res)):
                 w.writerow([
                     i,
@@ -258,7 +260,8 @@ def cmd_bench(args) -> int:
                     int(res.all_hops_exact[i]),
                     int(res.censored[i]),
                     idx.strategy_hash,
-                ])
+                ] + [int(by_threads[t].t_gap_ns[i]) for t in extra] + (
+                    ["", ""] if exact is None else [int(exact.t_mstar_ns[i]), int(exact.t_comp_ns[i])]))
 
     n = len(res)
     summary = {
@@ -269,28 +272,19 @@ def cmd_bench(args) -> int:
         "num_landmarks": len(idx.landmarks),
         "table_radius": idx.table_radius,
         "normalising_constant": nc,
-        "threads": list(args.threads),
+        "threads": thread_counts,
         "pinned": args.pin is not None and sys.platform.startswith("linux"),
-        "compute_only_ns": {
-            "decode": percentiles(res.t_decode_ns),
-            "gap": percentiles(res.t_gap_ns),
-            "total": percentiles(res.t_decode_ns + res.t_gap_ns),
-            "gap_overhead_ratio_median": float(np.median(res.t_gap_ns) / max(1.0, np.median(res.t_decode_ns))),
+        # Compute-only per-shot latency at each thread count (stage timers inside decode_batch).
+        "latency_ns_by_threads": {
+            str(t): {
+                "decode": percentiles(r.t_decode_ns),
+                "gap": percentiles(r.t_gap_ns),
+                "total": percentiles(r.t_decode_ns + r.t_gap_ns),
+                "gap_median_speedup": float(np.median(res.t_gap_ns) / max(1.0, np.median(r.t_gap_ns))),
+            }
+            for t, r in by_threads.items()
         },
-        "throughput": {
-            "single_thread_wall_s": wall_1,
-            "single_thread_us_per_shot": 1e6 * wall_1 / n,
-            "core_seconds_per_shot_single": wall_1 / n,
-            "by_threads": {
-                str(t): {
-                    "wall_s": w,
-                    "us_per_shot": 1e6 * w / n,
-                    "core_seconds_per_shot": t * w / n,
-                    "speedup": wall_1 / w,
-                }
-                for t, w in walls.items()
-            },
-        },
+        "gap_overhead_ratio_median": float(np.median(res.t_gap_ns) / max(1.0, np.median(res.t_decode_ns))),
         "walk_simple_fraction": float(np.mean(res.walk_simple)),
         "all_hops_exact_fraction": float(np.mean(res.all_hops_exact)),
         "censored_fraction": float(np.mean(res.censored)),
@@ -299,6 +293,18 @@ def cmd_bench(args) -> int:
     }
     if exact is not None:
         summary["exact_ns"] = percentiles(exact.t_exact_ns)
+        # The baseline's two decodes separately: the one in the class of M* plays the role of the
+        # ordinary decode; the complementary-class decode is what the baseline pays for the gap.
+        summary["exact_mstar_decode_ns"] = percentiles(exact.t_mstar_ns)
+        summary["exact_comp_decode_ns"] = percentiles(exact.t_comp_ns)
+        # Gap computation only: baseline complementary decode latency / fastgap gap-stage latency.
+        summary["gap_speedup_vs_exact_by_threads"] = {
+            str(t): {
+                q: float(summary["exact_comp_decode_ns"][q] / max(1.0, summary["latency_ns_by_threads"][str(t)]["gap"][q]))
+                for q in ("median", "p99", "p99.9")
+            }
+            for t in by_threads
+        }
         summary["soundness_violations"] = violations
         summary["gap_lb_equals_exact_fraction"] = float(np.mean(res.gap_lb_int == exact.gap_int))
         summary["mean_gap_shortfall_db"] = float(np.mean(GapIndex.to_db(np.where(
@@ -307,7 +313,7 @@ def cmd_bench(args) -> int:
             cls = res.classify(args.threshold)
             summary["uncertain_fraction_at_threshold"] = float(np.mean(cls == 0))
     if e2e is not None:
-        summary["end_to_end_ns"] = percentiles(e2e)
+        summary["end_to_end_ns_by_threads"] = {str(t): percentiles(v) for t, v in e2e.items()}
     text = json.dumps(summary, indent=2)
     print(text)
     if args.summary:
@@ -396,7 +402,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     b.add_argument("--shots", type=int, default=10000)
     b.add_argument("--warmup", type=int, default=1000)
     b.add_argument("--threads", type=int, nargs="+", default=[1],
-                   help="thread counts to measure throughput at, e.g. --threads 4 10")
+                   help="thread counts per shot to measure latency at (1 is always included), e.g. --threads 4 10")
     b.add_argument("--seed", type=int, default=None)
     b.add_argument("--threshold", type=float, default=None, help="post-selection threshold in nats")
     b.add_argument("--upper-bound", action="store_true", default=True)
@@ -430,6 +436,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--idx", required=True)
     s.add_argument("--threshold", type=float, default=None)
     s.add_argument("--pin", type=int, default=None)
+    s.add_argument("--threads", type=int, default=1, help="threads per shot")
     s.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)

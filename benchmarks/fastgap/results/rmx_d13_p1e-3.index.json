@@ -8,7 +8,7 @@
   "potential_bytes_per_detector": 168.0,
   "strategy": "faces_corners",
   "strategy_hash": "cbd0f961e3c74fa6",
-  "build_seconds": 0.05751845799386501,
+  "build_seconds": 0.05884483293630183,
   "landmarks": [
     "face:t=min",
     "face:t=max",

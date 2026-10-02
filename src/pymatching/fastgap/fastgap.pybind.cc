@@ -115,7 +115,7 @@ py::dict gap_results_to_dict(const std::vector<GapResult>& rs) {
 py::dict exact_results_to_dict(const std::vector<ExactGap>& rs) {
     size_t n = rs.size();
     py::array_t<uint8_t> prediction(n);
-    py::array_t<int64_t> w_star(n), gap(n), w_even(n), w_odd(n), t(n);
+    py::array_t<int64_t> w_star(n), gap(n), w_even(n), w_odd(n), t(n), t_mstar(n), t_comp(n);
     for (size_t i = 0; i < n; i++) {
         prediction.mutable_at(i) = rs[i].prediction;
         w_star.mutable_at(i) = rs[i].w_star;
@@ -123,6 +123,8 @@ py::dict exact_results_to_dict(const std::vector<ExactGap>& rs) {
         w_even.mutable_at(i) = is_inf(rs[i].w_even) ? -1 : rs[i].w_even;
         w_odd.mutable_at(i) = is_inf(rs[i].w_odd) ? -1 : rs[i].w_odd;
         t.mutable_at(i) = rs[i].t_exact_ns;
+        t_mstar.mutable_at(i) = rs[i].t_mstar_ns;
+        t_comp.mutable_at(i) = rs[i].t_comp_ns;
     }
     return py::dict(
         "prediction"_a = prediction,
@@ -130,7 +132,9 @@ py::dict exact_results_to_dict(const std::vector<ExactGap>& rs) {
         "gap"_a = gap,
         "w_even"_a = w_even,
         "w_odd"_a = w_odd,
-        "t_exact_ns"_a = t);
+        "t_exact_ns"_a = t,
+        "t_mstar_ns"_a = t_mstar,
+        "t_comp_ns"_a = t_comp);
 }
 
 /// Compares fastgap's decode graph with the graph PyMatching builds from a reference gap DEM
@@ -309,6 +313,7 @@ PYBIND11_MODULE(_cpp_fastgap, m) {
             "num_threads"_a = 1,
             "pin_threads"_a = false)
         .def_property_readonly("num_threads", &GapDecoder::num_threads)
+        .def_readwrite("parallel_grain", &GapDecoder::parallel_grain)
         .def(
             "decode",
             [](GapDecoder& self, const py::array_t<uint64_t, py::array::c_style | py::array::forcecast>& events,

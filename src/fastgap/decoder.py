@@ -114,10 +114,14 @@ class GapDecoder:
 
     Args:
         index: the :class:`GapIndex` for the DEM.
-        num_threads: size of the persistent thread pool (created once here, never per shot).
-            ``decode_batch`` spreads shots over it; ``decode`` uses it for the price matrix of
-            very large shots.
-        pin_threads: pin pool threads to cores where the OS allows (Linux).
+        num_threads: number of threads that cooperate on *each* shot's gap search, including the
+            calling thread (which runs the search; the other ``num_threads - 1`` prefetch price
+            rows). Created once here, never per shot. Shots are always decoded one after another, so this
+            lowers per-shot latency rather than raising throughput. Shots with fewer than
+            ``parallel_grain`` defects run on one thread. Use at most the size of the fastest
+            core cluster (5 on an M5 Pro); beyond that latency gets worse.
+        pin_threads: pin the threads to cores where the OS allows (Linux; on macOS they only ask
+            for the user-interactive QoS class).
         check: run the debug invariants (dual feasibility, relay tightness, d_hat <= dist) on
             every shot. Slow; meant for tests.
     """
@@ -130,6 +134,15 @@ class GapDecoder:
     @property
     def num_threads(self) -> int:
         return int(self._core.num_threads)
+
+    @property
+    def parallel_grain(self) -> int:
+        """Shots with fewer defects than this use one thread (results never depend on it)."""
+        return int(self._core.parallel_grain)
+
+    @parallel_grain.setter
+    def parallel_grain(self, value: int) -> None:
+        self._core.parallel_grain = int(value)
 
     def decode(
         self,

@@ -34,6 +34,11 @@ struct ExactGap {
     dist_int w_even = DIST_INF;
     dist_int w_odd = DIST_INF;
     int64_t t_exact_ns = 0;
+    /// The two decodes timed separately: the one in the class of M* (it yields W* and the
+    /// prediction, like an ordinary decode) and the one in the complementary class (W^c). The
+    /// latter is what the baseline pays for the gap on top of an ordinary decode.
+    int64_t t_mstar_ns = 0;
+    int64_t t_comp_ns = 0;
 };
 
 /// The exact two-decode baseline (CLAUDE.md §5.2): PyMatching on the gauge-fixed graph with the

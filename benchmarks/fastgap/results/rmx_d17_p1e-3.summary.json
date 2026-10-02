@@ -1,5 +1,5 @@
 {
-  "num_shots": 10000,
+  "num_shots": 20000,
   "num_detectors": 4896,
   "strategy": "faces_corners",
   "strategy_hash": "69c5683ff03c2e7d",
@@ -7,73 +7,116 @@
   "table_radius": 109684448,
   "normalising_constant": 4077594.0517170443,
   "threads": [
-    4,
-    10
+    1,
+    4
   ],
   "pinned": false,
-  "compute_only_ns": {
-    "decode": {
-      "median": 7917.0,
-      "p99": 15208.0,
-      "p99.9": 20959.124000000025,
-      "mean": 8218.6266,
-      "max": 30250.0
-    },
-    "gap": {
-      "median": 24875.0,
-      "p99": 44208.01,
-      "p99.9": 57209.124000000025,
-      "mean": 25605.354,
-      "max": 65291.0
-    },
-    "total": {
-      "median": 33000.0,
-      "p99": 56292.830000000016,
-      "p99.9": 69541.08400000002,
-      "mean": 33823.9806,
-      "max": 87791.0
-    },
-    "gap_overhead_ratio_median": 3.1419729695591765
-  },
-  "throughput": {
-    "single_thread_wall_s": 0.3476254160050303,
-    "single_thread_us_per_shot": 34.76254160050303,
-    "core_seconds_per_shot_single": 3.476254160050303e-05,
-    "by_threads": {
-      "4": {
-        "wall_s": 0.09491300000809133,
-        "us_per_shot": 9.491300000809133,
-        "core_seconds_per_shot": 3.7965200003236534e-05,
-        "speedup": 3.662569047184213
+  "latency_ns_by_threads": {
+    "1": {
+      "decode": {
+        "median": 7833.0,
+        "p99": 14125.0,
+        "p99.9": 20708.04200000016,
+        "mean": 8084.46575,
+        "max": 36833.0
       },
-      "10": {
-        "wall_s": 0.05058591696433723,
-        "us_per_shot": 5.058591696433723,
-        "core_seconds_per_shot": 5.058591696433723e-05,
-        "speedup": 6.871980125419178
-      }
+      "gap": {
+        "median": 18875.0,
+        "p99": 34250.0,
+        "p99.9": 46125.12500000048,
+        "mean": 19392.28055,
+        "max": 60375.0
+      },
+      "total": {
+        "median": 26834.0,
+        "p99": 45750.0,
+        "p99.9": 57167.54100000208,
+        "mean": 27476.7463,
+        "max": 75458.0
+      },
+      "gap_median_speedup": 1.0
+    },
+    "4": {
+      "decode": {
+        "median": 8041.0,
+        "p99": 14208.419999999933,
+        "p99.9": 18500.041000000158,
+        "mean": 8265.0184,
+        "max": 23584.0
+      },
+      "gap": {
+        "median": 11917.0,
+        "p99": 21875.0,
+        "p99.9": 30459.45800000176,
+        "mean": 12310.75025,
+        "max": 45958.0
+      },
+      "total": {
+        "median": 20125.0,
+        "p99": 33208.0,
+        "p99.9": 40708.33300000128,
+        "mean": 20575.76865,
+        "max": 57458.0
+      },
+      "gap_median_speedup": 1.583871779810355
     }
   },
-  "walk_simple_fraction": 0.9973,
-  "all_hops_exact_fraction": 0.1573,
+  "gap_overhead_ratio_median": 2.4096770075322356,
+  "walk_simple_fraction": 0.99685,
+  "all_hops_exact_fraction": 0.1586,
   "censored_fraction": 0.0,
-  "blossom_shot_fraction": 0.1561,
-  "mean_defects": 87.7957,
+  "blossom_shot_fraction": 0.16045,
+  "mean_defects": 87.75205,
   "exact_ns": {
-    "median": 531395.5,
-    "p99": 775595.9200000003,
-    "p99.9": 875919.7920000008,
-    "mean": 536097.3,
-    "max": 953417.0
+    "median": 544750.0,
+    "p99": 820667.4099999999,
+    "p99.9": 912001.5000000058,
+    "mean": 550269.8618,
+    "max": 1012458.0
+  },
+  "exact_mstar_decode_ns": {
+    "median": 8709.0,
+    "p99": 15959.0,
+    "p99.9": 29917.45800000176,
+    "mean": 9018.0074,
+    "max": 39000.0
+  },
+  "exact_comp_decode_ns": {
+    "median": 535875.0,
+    "p99": 808459.2499999998,
+    "p99.9": 901583.2080000008,
+    "mean": 541166.90205,
+    "max": 996250.0
+  },
+  "gap_speedup_vs_exact_by_threads": {
+    "1": {
+      "median": 28.39072847682119,
+      "p99": 23.60464963503649,
+      "p99.9": 19.546466443180183
+    },
+    "4": {
+      "median": 44.96727364269531,
+      "p99": 36.95813714285713,
+      "p99.9": 29.599450128099743
+    }
   },
   "soundness_violations": 0,
-  "gap_lb_equals_exact_fraction": 0.2423,
-  "mean_gap_shortfall_db": 8.573360716425956,
-  "end_to_end_ns": {
-    "median": 46666.0,
-    "p99": 74339.25,
-    "p99.9": 88403.33400000577,
-    "mean": 112931.8495,
-    "max": 130681917.0
+  "gap_lb_equals_exact_fraction": 0.243,
+  "mean_gap_shortfall_db": 8.572744236501281,
+  "end_to_end_ns_by_threads": {
+    "1": {
+      "median": 44229.5,
+      "p99": 66880.42,
+      "p99.9": 76633.62500000176,
+      "mean": 109712.489,
+      "max": 130482500.0
+    },
+    "4": {
+      "median": 31000.0,
+      "p99": 45168.93,
+      "p99.9": 60833.45900000009,
+      "mean": 97766.5415,
+      "max": 132509125.0
+    }
   }
 }

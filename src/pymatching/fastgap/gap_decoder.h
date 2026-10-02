@@ -15,6 +15,8 @@
 #ifndef PYMATCHING2_FASTGAP_GAP_DECODER_H
 #define PYMATCHING2_FASTGAP_GAP_DECODER_H
 
+#include <algorithm>
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -71,7 +73,7 @@ struct GapResult {
     std::vector<Hop> walk;
 };
 
-/// Per-thread state: a private Mwpm plus scratch buffers reused across shots.
+/// Decoder state: the Mwpm plus scratch buffers reused across shots.
 struct GapWorker {
     pm::Mwpm mwpm;
     DualState ds;
@@ -83,27 +85,78 @@ struct GapWorker {
     std::vector<int32_t> pred_hop;
     std::vector<dist_int> row;  // exact pricing: distances from the current state to all detectors
     InteriorGraph::AStarScratch astar;
-    // Per-shot pricing scratch (index pricing).
-    std::vector<int32_t> node_to_defect;  // -1 for non-defects; reset after every shot
-    std::vector<int32_t> act;             // active hop targets (defect indices), compacted
-    std::vector<int32_t> pos;             // position of each defect in `act`, or -1
-    std::vector<int32_t> gathered;        // saturated potentials of active targets, potential-major (k * n + p)
-    std::vector<int32_t> gathered_rows;   // saturated potentials of all defects, defect-major
-    std::vector<int32_t> row_lb;
-    std::vector<dist_int> row_price;      // prices of the current row
-    std::vector<uint8_t> row_is_exact;
+    // Per-shot pricing scratch.
+    std::vector<int32_t> node_to_defect;  // index pricing: -1 for non-defects; reset after every shot
+    std::vector<int32_t> act;             // exact pricing: active hop targets (defect indices), compacted
+    std::vector<int32_t> pos;             // exact pricing: position of each defect in `act`, or -1
     std::vector<int32_t> top;             // top-level blossom of each defect, -1 if none
+};
+
+/// State of one shot's search with index pricing (CLAUDE.md §3.3, §3.4).
+///
+/// Every hop target u (a defect not matched to L) leads, by its relay, to exactly one place:
+/// the state mate(u), or R. Labels are therefore stored per target position, which makes
+/// relaxing a row one contiguous, branch-free pass. Targets leading to states come first,
+/// sorted by state index (so the first minimum is the serial tie-break), then targets leading to
+/// R, sorted by defect index. The start states (L, and defects matched to L) all have label 0
+/// and are never relaxed, so they are kept in a separate sorted list.
+///
+/// With several threads, thread 0 runs the search while the others prefetch price rows "standing
+/// at x" for the unsettled states with the smallest labels, the ones thread 0 settles next. A
+/// row's content does not depend on who priced it, so results never depend on the thread count.
+struct RowCache {
+    static constexpr uint32_t ROW_FREE = 0, ROW_CLAIMED = 1, ROW_READY = 2;
+    size_t num_states = 0;  // n + 1 (state n is "standing at L")
+    size_t num_targets = 0;
+    size_t num_state_targets = 0;   // targets [0, num_state_targets) lead to a state
+    std::vector<int32_t> tgt_u;     // target defect, per position
+    std::vector<int32_t> tgt_state; // state reached by the relay, per position < num_state_targets
+    std::vector<int32_t> tgt_pos;   // position of each defect among the targets, or -1
+    std::vector<int32_t> starts;    // start states, ascending
+    std::vector<int32_t> gathered;  // target potentials, potential-major (k * num_targets + p)
+    // Thread 0's search state, per target position.
+    std::vector<dist_int> label;
+    std::vector<dist_int> settled_mask;  // 0, or DIST_INF once the state is settled
+    std::vector<int32_t> pred_state;
+    std::vector<int32_t> pred_hop;
+    std::vector<dist_int> hint_shadow;  // last label published to `hint`, per target position
+    // Shared with the prefetchers. Rows are stored as int32, saturated at `cap` = d_LR + 1: the
+    // answer is at most d_LR, so a state whose label reaches d_LR + 1 is never settled, never on
+    // the walk, and never the answer, and saturation changes nothing that is reported.
+    dist_int cap = DIST_INF;
+    std::vector<int32_t> rows;  // num_states x num_targets prices
+    std::unique_ptr<std::atomic<uint32_t>[]> row_state;
+    std::unique_ptr<std::atomic<dist_int>[]> hint;  // label published by thread 0 (INF once settled)
+    size_t capacity = 0;
+    std::atomic<bool> done{false};
+
+    void reserve_states(size_t n) {
+        if (n <= capacity)
+            return;
+        capacity = std::max(n, 2 * capacity);
+        row_state = std::make_unique<std::atomic<uint32_t>[]>(capacity);
+        hint = std::make_unique<std::atomic<dist_int>[]>(capacity);
+    }
+};
+
+/// Per-thread scratch for pricing one row.
+struct alignas(64) RowScratch {
+    std::vector<int32_t> lb;
+    std::vector<dist_int> d;
+    std::vector<dist_int> row;  // single-threaded search: the current row
 };
 
 class GapDecoder {
    public:
+    /// `num_threads` threads cooperate on each shot's gap search (intra-shot parallelism); shots
+    /// are always decoded one after another.
     GapDecoder(std::shared_ptr<const GapIndex> index, size_t num_threads = 1, bool pin_threads = false);
 
     /// Decode one shot given as detection-event indices.
     GapResult decode(const std::vector<uint64_t>& detection_events, const DecodeOptions& options);
 
     /// Decode `num_shots` bit-packed shots (`bytes_per_shot` bytes each, little-endian bit order as
-    /// produced by stim). Shots are spread over the thread pool. `out` is resized to num_shots.
+    /// produced by stim), in order. `out` is resized to num_shots.
     void decode_batch(
         const uint8_t* shots,
         size_t num_shots,
@@ -115,21 +168,20 @@ class GapDecoder {
         return *index_;
     }
     size_t num_threads() const {
-        return pool_.size();
+        return team_.size();
     }
 
+    /// Shots with fewer than `parallel_grain` defects are searched on one thread (the row
+    /// prefetchers cannot get ahead on tiny shots). Results never depend on it.
+    size_t parallel_grain = 16;
+
    private:
-    /// `parallel_pricing` lets a single-shot decode fill the price matrix on the pool; it must be
-    /// false inside a pool task (batch), since the pool is not re-entrant.
-    void decode_with(
-        GapWorker& w,
-        const std::vector<uint64_t>& events,
-        const DecodeOptions& o,
-        GapResult& res,
-        bool parallel_pricing);
+    void decode_with(GapWorker& w, const std::vector<uint64_t>& events, const DecodeOptions& o, GapResult& res);
     std::shared_ptr<const GapIndex> index_;
-    ThreadPool pool_;
-    std::vector<std::unique_ptr<GapWorker>> workers_;
+    SpinTeam team_;
+    GapWorker worker_;
+    RowCache cache_;
+    std::vector<std::unique_ptr<RowScratch>> scratch_;
 };
 
 /// Unpacks one bit-packed shot into detection events (dropping `ignored_detector` if given).
