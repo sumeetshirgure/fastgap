@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23860610.svg)](https://doi.org/10.5281/zenodo.23860610)
+
 # fastgap
 
 This fork adds **fastgap**, a Python package shipped in the same distribution as `pymatching`.
